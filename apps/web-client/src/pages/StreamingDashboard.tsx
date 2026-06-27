@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { useState, useCallback } from "react";
-import MockVideoPlayer from "../components/MockVideoPlayer";
+import { useState, useCallback, useEffect } from "react";
+import MockVideoPlayer, { LiveStats } from "../components/MockVideoPlayer";
 import { STREAM_C as C, STREAM_CSS, streamMoney } from "../lib/streamTheme";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4001";
@@ -18,6 +18,7 @@ export default function StreamingDashboard() {
   const nfcUid = (router.query.uid as string) || DEFAULT_STREAM_UID;
   const [todayMinutes, setTodayMinutes] = useState<number | null>(null);
   const [streamedCents, setStreamedCents] = useState<number | null>(null);
+  const [liveStats, setLiveStats] = useState<LiveStats | null>(null);
 
   const refreshSession = useCallback(async () => {
     try {
@@ -31,34 +32,81 @@ export default function StreamingDashboard() {
     }
   }, [nfcUid]);
 
+  // Load today's totals on mount and keep them fresh, so "Watched today" and
+  // "Streamed today" show real numbers even before a video is started.
+  useEffect(() => {
+    refreshSession();
+    const t = setInterval(refreshSession, 10000);
+    return () => clearInterval(t);
+  }, [refreshSession]);
+
   // ── Dashboard ─────────────────────────────────────────────────────────────────
   return (
     <div style={S.page}>
       <style dangerouslySetInnerHTML={{ __html: STREAM_CSS }} />
       <Header uid={nfcUid} />
 
-      <main style={{ maxWidth: 1040, margin: "1.5rem auto", padding: "0 1.5rem" }}>
-        {/* Stats strip */}
+      <main style={{ maxWidth: 1240, margin: "1.5rem auto", padding: "0 1.5rem", width: "100%" }}>
+        {/* Stats strip — swaps to live session values while a video is playing */}
         <div style={S.statGrid} className="s-fadeUp">
-          <Stat label="WATCHED TODAY" value={todayMinutes !== null ? `${todayMinutes} min` : "—"} />
-          <Stat
-            label="STREAMED TODAY"
-            value={streamedCents !== null ? streamMoney(streamedCents) : "—"}
-            accent
-          />
-          <Stat
-            label="PAID IN REAL TIME"
-            value="Live"
-            hint="Web Monetization streams as you watch"
-            tone="green"
-          />
+          {liveStats?.isPlaying ? (
+            <>
+              <Stat
+                label="STREAMED THIS SESSION"
+                value={streamMoney(liveStats.totalCents)}
+                accent
+                live
+              />
+              <Stat
+                label="TIME WATCHED"
+                value={formatSeconds(liveStats.watchedSeconds)}
+                tone="green"
+                live
+              />
+              <Stat
+                label="AVG RATE"
+                value={`${streamMoney(liveStats.ratePerMin)}/min`}
+                hint="streaming now"
+                tone="green"
+                live
+              />
+            </>
+          ) : (
+            <>
+              <Stat label="WATCHED TODAY" value={todayMinutes !== null ? `${todayMinutes} min` : "—"} />
+              <Stat
+                label="STREAMED TODAY"
+                value={streamedCents !== null ? streamMoney(streamedCents) : "—"}
+                accent
+              />
+              <Stat
+                label="PAID IN REAL TIME"
+                value="Live"
+                hint="Web Monetization streams as you watch"
+                tone="green"
+              />
+            </>
+          )}
         </div>
 
         {/* Video player */}
-        <MockVideoPlayer nfcUid={nfcUid} onSessionChange={refreshSession} />
+        <MockVideoPlayer
+          nfcUid={nfcUid}
+          onSessionChange={refreshSession}
+          onLiveStats={setLiveStats}
+        />
       </main>
     </div>
   );
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function formatSeconds(s: number): string {
+  const total = Math.floor(s);
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
 // ── Pieces ──────────────────────────────────────────────────────────────────
@@ -79,13 +127,16 @@ function Header({ uid }: { uid?: string }) {
 }
 
 function Stat({
-  label, value, hint, accent, tone,
-}: { label: string; value: string; hint?: string; accent?: boolean; tone?: "green" }) {
+  label, value, hint, accent, tone, live,
+}: { label: string; value: string; hint?: string; accent?: boolean; tone?: "green"; live?: boolean }) {
   const valueColor = tone === "green" ? C.green : accent ? C.accent : C.text;
   const labelColor = tone === "green" ? C.green : C.accent;
   return (
     <div style={{ ...S.stat, ...(tone === "green" ? S.statGreen : null) }} className="s-card">
-      <div style={{ ...S.statLbl, color: labelColor }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ ...S.statLbl, color: labelColor }}>{label}</div>
+        {live && <span className="s-live" style={{ flexShrink: 0 }} />}
+      </div>
       <div style={{ ...S.statNum, color: valueColor }}>{value}</div>
       {hint && <div style={{ fontSize: 11, color: C.dim, marginTop: 6 }}>{hint}</div>}
     </div>

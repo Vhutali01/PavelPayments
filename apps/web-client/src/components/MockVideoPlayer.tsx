@@ -11,6 +11,30 @@ const WM_RECEIVER = process.env.NEXT_PUBLIC_WALLET_ADDRESS ?? "";
 // Monetization agent is paying. Override with NEXT_PUBLIC_STREAM_RATE_CENTS_PER_MIN.
 const DEMO_RATE_CENTS_PER_MIN = Number(process.env.NEXT_PUBLIC_STREAM_RATE_CENTS_PER_MIN ?? 12);
 
+// Responsive two-column layout: player on the left, scrollable library on the
+// right. Collapses to a single column on narrow viewports so the page resizes
+// gracefully. A custom scrollbar keeps the library card on-brand.
+const STREAM_LAYOUT_CSS = `
+.s-stream-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 18px;
+  align-items: start;
+}
+@media (max-width: 760px) {
+  .s-stream-grid { grid-template-columns: 1fr; }
+  .s-stream-grid aside { position: static !important; max-height: none !important; }
+}
+.s-scroll { scrollbar-width: thin; scrollbar-color: rgba(168,85,247,0.45) transparent; }
+.s-scroll::-webkit-scrollbar { width: 8px; }
+.s-scroll::-webkit-scrollbar-track { background: transparent; }
+.s-scroll::-webkit-scrollbar-thumb {
+  background: rgba(168,85,247,0.35);
+  border-radius: 999px;
+}
+.s-scroll::-webkit-scrollbar-thumb:hover { background: rgba(168,85,247,0.6); }
+`;
+
 interface MockContent {
   id: string;
   title: string;
@@ -43,12 +67,20 @@ function typeLabel(type: MockContent["type"]): string {
   return type === "movie" ? "Movie" : type === "show" ? "Series" : "Live";
 }
 
+export interface LiveStats {
+  isPlaying: boolean;
+  totalCents: number;
+  watchedSeconds: number;
+  ratePerMin: number;
+}
+
 interface MockVideoPlayerProps {
   nfcUid: string;
   onSessionChange?: () => void;
+  onLiveStats?: (stats: LiveStats) => void;
 }
 
-export default function MockVideoPlayer({ nfcUid, onSessionChange }: MockVideoPlayerProps) {
+export default function MockVideoPlayer({ nfcUid, onSessionChange, onLiveStats }: MockVideoPlayerProps) {
   const [selected, setSelected] = useState<MockContent | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -98,6 +130,11 @@ export default function MockVideoPlayer({ nfcUid, onSessionChange }: MockVideoPl
   });
   const wmRatePerMin = watchedSeconds > 0 ? (wm.totalCents / watchedSeconds) * 60 : 0;
 
+  // Bubble live session stats up so the dashboard can swap its strip.
+  useEffect(() => {
+    onLiveStats?.({ isPlaying, totalCents: wm.totalCents, watchedSeconds, ratePerMin: wmRatePerMin });
+  }, [isPlaying, wm.totalCents, watchedSeconds, wmRatePerMin, onLiveStats]);
+
   const startSession = useCallback(
     async (content: MockContent, duration: number) => {
       try {
@@ -129,7 +166,7 @@ export default function MockVideoPlayer({ nfcUid, onSessionChange }: MockVideoPl
   );
 
   function handleSelect(content: MockContent) {
-    if (isPlaying) return;
+    if (selected?.id === content.id) return;
     setSelected(content);
     setSessionId(null);
     sessionIdRef.current = null;
@@ -138,8 +175,16 @@ export default function MockVideoPlayer({ nfcUid, onSessionChange }: MockVideoPl
     maxWatchedRef.current = 0;
     wm.reset();
     setMessage("Loading…");
-    // Defer play() until the <video> has the new src loaded.
-    setTimeout(() => videoRef.current?.play().catch(() => {}), 0);
+    // The <video> is remounted (key={selected.id}) with autoPlay, so playback
+    // starts on its own once the new source is ready — see handleCanPlay.
+  }
+
+  // Fallback play trigger: if the browser blocked autoPlay, retry once the
+  // media is ready. This still runs inside the user's click activation window.
+  function handleCanPlay() {
+    if (videoRef.current && videoRef.current.paused) {
+      videoRef.current.play().catch(() => {});
+    }
   }
 
   async function handleStop() {
@@ -239,37 +284,42 @@ export default function MockVideoPlayer({ nfcUid, onSessionChange }: MockVideoPl
   }
 
   return (
-    <div style={S.panel} className="s-fadeUp">
-      <style dangerouslySetInnerHTML={{ __html: STREAM_CSS }} />
+    <div style={S.layout} className="s-stream-grid s-fadeUp">
+      <style dangerouslySetInnerHTML={{ __html: STREAM_CSS + STREAM_LAYOUT_CSS }} />
 
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <span style={S.iconTile}>📺</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, letterSpacing: "0.01em" }}>Mock Streaming Service</h2>
-          <div style={{ fontSize: 11.5, color: C.dim, marginTop: 2 }}>Paid in real time with Web Monetization</div>
+      {/* ── Left: player card ─────────────────────────────────────────────── */}
+      <div style={S.panel}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          <span style={S.iconTile}>📺</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, letterSpacing: "0.01em" }}>Mock Streaming Service</h2>
+            <div style={{ fontSize: 11.5, color: C.dim, marginTop: 2 }}>Paid in real time with Web Monetization</div>
+          </div>
+          <WmStatusPill state={wm.state} />
         </div>
-        <WmStatusPill state={wm.state} />
-      </div>
 
-      {/* Web Monetization availability notice */}
-      {(wm.state === "unsupported" || wm.state === "unconfigured") && (
-        <div style={S.wmNotice}>
-          {wm.state === "unsupported"
-            ? "No Web Monetization agent detected. Install a Web Monetization–enabled browser or extension and add a funded wallet to stream payments while you watch."
-            : "Streaming wallet not configured. Set NEXT_PUBLIC_WALLET_ADDRESS to the service wallet address to receive Web Monetization payments."}
-        </div>
-      )}
+        {/* Web Monetization availability notice */}
+        {(wm.state === "unsupported" || wm.state === "unconfigured") && (
+          <div style={S.wmNotice}>
+            {wm.state === "unsupported"
+              ? "No Web Monetization agent detected. Install a Web Monetization–enabled browser or extension and add a funded wallet to stream payments while you watch."
+              : "Streaming wallet not configured. Set NEXT_PUBLIC_WALLET_ADDRESS to the service wallet address to receive Web Monetization payments."}
+          </div>
+        )}
 
-      {/* Now playing / hero */}
-      {selected ? (
+        {/* Now playing / hero */}
+        {selected ? (
         <div style={S.stage} className="s-pop">
           {/* Video frame */}
           <div style={S.videoFrame}>
             <video
+              key={selected.id}
               ref={videoRef}
               src={selected.src}
+              autoPlay
               controls
               playsInline
+              onCanPlay={handleCanPlay}
               onLoadedMetadata={handleLoadedMetadata}
               onTimeUpdate={handleTimeUpdate}
               onPlay={handlePlay}
@@ -355,59 +405,90 @@ export default function MockVideoPlayer({ nfcUid, onSessionChange }: MockVideoPl
       )}
 
       {message && <p style={S.message}>{message}</p>}
+      </div>
 
-      {/* Catalog */}
-      {CATALOG_GROUPS.map((group) => {
-        const items = MOCK_CATALOG.filter((c) => c.type === group.type);
-        if (!items.length) return null;
-        return (
-          <div key={group.label} style={{ marginTop: 18 }}>
-            <div style={S.groupLabel}>{group.label}</div>
-            <div style={S.catalog}>
-              {items.map((content) => {
-                const isActive = selected?.id === content.id;
-                const disabled = isPlaying && !isActive;
-                return (
-                  <div
-                    key={content.id}
-                    style={{
-                      ...S.contentCard,
-                      borderColor: isActive ? "rgba(168,85,247,0.5)" : C.line,
-                      background: isActive ? "rgba(168,85,247,0.08)" : C.panelSoft,
-                      opacity: disabled ? 0.5 : 1,
-                    }}
-                    className="s-card"
-                  >
-                    <span style={S.posterTileSm}>{content.poster}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {content.title}
-                      </div>
-                      <div style={{ fontSize: 11, color: C.dim, marginTop: 3 }}>
-                        {content.duration} · <span style={{ color: C.accent, fontWeight: 700 }}>Web Monetized</span>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => (isActive && sessionId ? handleStop() : handleSelect(content))}
-                      disabled={disabled}
-                      style={{
-                        ...S.playBtn,
-                        background: disabled ? C.line : `linear-gradient(135deg, ${C.accent}, ${C.accentDeep})`,
-                        color: disabled ? C.dim : "#fff",
-                        cursor: disabled ? "not-allowed" : "pointer",
-                        boxShadow: disabled ? "none" : "0 4px 12px rgba(124,58,237,0.35)",
-                      }}
-                      className="s-btn"
-                    >
-                      {isActive && sessionId ? "Stop" : "▶ Play"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+      {/* ── Right: scrollable library card ────────────────────────────────── */}
+      <aside style={S.sidePanel}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <span style={S.iconTileSm}>🎞️</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 style={{ margin: 0, fontSize: 14.5, fontWeight: 800 }}>Library</h3>
+            <div style={{ fontSize: 11, color: C.dim, marginTop: 2 }}>{MOCK_CATALOG.length} titles · pick one to play</div>
           </div>
-        );
-      })}
+        </div>
+
+        <div style={S.catalogScroll} className="s-scroll">
+          {/* Catalog */}
+          {CATALOG_GROUPS.map((group) => {
+            const items = MOCK_CATALOG.filter((c) => c.type === group.type);
+            if (!items.length) return null;
+            return (
+              <div key={group.label} style={{ marginBottom: 18 }}>
+                <div style={S.groupLabel}>{group.label}</div>
+                <div style={S.catalog}>
+                  {items.map((content) => {
+                    const isActive = selected?.id === content.id;
+                    const disabled = isPlaying && !isActive;
+                    const activate = () =>
+                      isActive && sessionId ? handleStop() : handleSelect(content);
+                    return (
+                      <div
+                        key={content.id}
+                        role="button"
+                        tabIndex={disabled ? -1 : 0}
+                        aria-disabled={disabled}
+                        onClick={() => !disabled && activate()}
+                        onKeyDown={(e) => {
+                          if (disabled) return;
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            activate();
+                          }
+                        }}
+                        style={{
+                          ...S.contentCard,
+                          borderColor: isActive ? "rgba(168,85,247,0.5)" : C.line,
+                          background: isActive ? "rgba(168,85,247,0.08)" : C.panelSoft,
+                          opacity: disabled ? 0.5 : 1,
+                          cursor: disabled ? "not-allowed" : "pointer",
+                        }}
+                        className="s-card"
+                      >
+                        <span style={S.posterTileSm}>{content.poster}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {content.title}
+                          </div>
+                          <div style={{ fontSize: 11, color: C.dim, marginTop: 3 }}>
+                            {content.duration} · <span style={{ color: C.accent, fontWeight: 700 }}>Web Monetized</span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!disabled) activate();
+                          }}
+                          disabled={disabled}
+                          style={{
+                            ...S.playBtn,
+                            background: disabled ? C.line : `linear-gradient(135deg, ${C.accent}, ${C.accentDeep})`,
+                            color: disabled ? C.dim : "#fff",
+                            cursor: disabled ? "not-allowed" : "pointer",
+                            boxShadow: disabled ? "none" : "0 4px 12px rgba(124,58,237,0.35)",
+                          }}
+                          className="s-btn"
+                        >
+                          {isActive && sessionId ? "Stop" : "▶ Play"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </aside>
     </div>
   );
 }
@@ -445,7 +526,6 @@ function WmStatusPill({ state }: { state: WMState }) {
   );
 }
 
-
 function BillingCell({ label, value, color, live, caption }: { label: string; value: string; color: string; live?: boolean; caption?: string }) {
   return (
     <div style={S.cell}>
@@ -465,6 +545,9 @@ function BillingCell({ label, value, color, live, caption }: { label: string; va
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 const S: Record<string, React.CSSProperties> = {
+  layout: {
+    width: "100%",
+  },
   panel: {
     background: C.panel,
     border: `1px solid ${C.line}`,
@@ -473,6 +556,42 @@ const S: Record<string, React.CSSProperties> = {
     boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
     color: C.text,
     fontFamily: "'Inter', system-ui, sans-serif",
+    minWidth: 0,
+  },
+  sidePanel: {
+    background: C.panel,
+    border: `1px solid ${C.line}`,
+    borderRadius: 18,
+    padding: "1.25rem",
+    boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+    color: C.text,
+    fontFamily: "'Inter', system-ui, sans-serif",
+    position: "sticky",
+    top: 78,
+    maxHeight: "calc(100vh - 96px)",
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+  },
+  catalogScroll: {
+    overflowY: "auto",
+    overflowX: "hidden",
+    paddingRight: 6,
+    marginRight: -6,
+    flex: 1,
+    minHeight: 0,
+  },
+  iconTileSm: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    fontSize: 16,
+    background: "rgba(168,85,247,0.12)",
+    border: "1px solid rgba(168,85,247,0.35)",
+    flexShrink: 0,
   },
   iconTile: {
     display: "inline-flex",
@@ -552,7 +671,7 @@ const S: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     boxShadow: "0 6px 16px rgba(124,58,237,0.4)",
   },
-  cellGrid: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 16 },
+  cellGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))", gap: 10, marginTop: 16 },
   cell: {
     background: C.panelSoft,
     border: `1px solid ${C.line}`,
@@ -652,7 +771,7 @@ const S: Record<string, React.CSSProperties> = {
     margin: "0 0 10px",
   },
   message: { color: C.dim, fontSize: 13.5, margin: "0 0 16px" },
-  catalog: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
+  catalog: { display: "grid", gridTemplateColumns: "1fr", gap: 10 },
   contentCard: {
     border: "1px solid",
     borderRadius: 12,
@@ -660,6 +779,7 @@ const S: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 12,
+    minWidth: 0,
   },
   playBtn: {
     padding: "0.4rem 0.9rem",
