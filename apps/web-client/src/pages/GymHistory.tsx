@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useRouter } from "next/router";
@@ -6,6 +6,25 @@ import { useState, useEffect, useCallback } from "react";
 import { QRCodeSVG } from "qrcode.react";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4001";
+
+const C = {
+  bg: "#0b1120",
+  panel: "#111a2e",
+  panelSoft: "#0f1729",
+  line: "#1f2a40",
+  text: "#f1f5f9",
+  dim: "#8694ad",
+  green: "#22c55e",
+  greenDeep: "#16a34a",
+  greenSoft: "#14532d",
+};
+
+const HISTORY_CSS = `
+  body { margin: 0; }
+  .gh-fadeUp { animation: ghFadeUp .3s ease both; }
+  @keyframes ghFadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .gh-row:hover { background: #162032 !important; }
+`;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -104,7 +123,7 @@ function NameCell({ current, onSave }: { current: string | null; onSave: (name: 
         <button onClick={submit} disabled={saving} style={{ padding: "2px 8px", background: "#6366f1", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>
           {saving ? "…" : "✓"}
         </button>
-        <button onClick={() => setEditing(false)} style={{ padding: "2px 6px", background: "none", border: "1px solid #d1d5db", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>✕</button>
+        <button onClick={() => setEditing(false)} style={{ padding: "2px 6px", background: "none", border: `1px solid ${C.line}`, borderRadius: 4, cursor: "pointer", fontSize: 12, color: C.dim }}>✕</button>
       </span>
     );
   }
@@ -113,10 +132,10 @@ function NameCell({ current, onSave }: { current: string | null; onSave: (name: 
     <span
       onClick={() => { setValue(current ?? ""); setEditing(true); }}
       title="Click to add/edit name"
-      style={{ cursor: "pointer", color: current ? "#0f172a" : "#94a3b8", fontStyle: current ? "normal" : "italic", display: "inline-flex", alignItems: "center", gap: 4 }}
+      style={{ cursor: "pointer", color: current ? C.text : C.dim, fontStyle: current ? "normal" : "italic", display: "inline-flex", alignItems: "center", gap: 4 }}
     >
       {current ?? "Add name"}
-      <span style={{ fontSize: 10, color: "#c7d2fe" }}>✎</span>
+        <span style={{ fontSize: 10, color: C.dim }}>✎</span>
     </span>
   );
 }
@@ -182,17 +201,31 @@ export default function GymHistory() {
     fetchFlow();
     fetchVisits();
     fetchFlowHistory();
-    const pollId = setInterval(fetchFlow, 5000);
-    const tickId = setInterval(() => setTick(t => t + 1), 1000);
-    return () => { clearInterval(pollId); clearInterval(tickId); };
+    const flowPollId   = setInterval(fetchFlow, 5000);
+    const visitsPollId = setInterval(fetchVisits, 5000);
+    const histPollId   = setInterval(fetchFlowHistory, 10000);
+    const tickId       = setInterval(() => setTick(t => t + 1), 1000);
+    return () => {
+      clearInterval(flowPollId);
+      clearInterval(visitsPollId);
+      clearInterval(histPollId);
+      clearInterval(tickId);
+    };
   }, [fetchFlow, fetchVisits, fetchFlowHistory]);
 
-  // Keep exit-QR modal fresh; auto-close when session ends
+  // Keep exit-QR modal fresh; auto-close when session ends and immediately
+  // refresh visits + stream history so tap-out time appears right away
   useEffect(() => {
     if (!exitQrSession) return;
     const updated = flowSessions.find(s => s.id === exitQrSession.id);
-    if (updated) setExitQrSession(updated); else setExitQrSession(null);
-  }, [flowSessions]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (updated) {
+      setExitQrSession(updated);
+    } else {
+      setExitQrSession(null);
+      fetchVisits();
+      fetchFlowHistory();
+    }
+  }, [flowSessions, fetchVisits, fetchFlowHistory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Settlement history (UID scoped)
   useEffect(() => {
@@ -243,47 +276,48 @@ export default function GymHistory() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <>
+    <div style={{ minHeight: "100vh", background: `radial-gradient(1200px 500px at 70% -5%, #15233f 0%, ${C.bg} 55%)`, color: C.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <style dangerouslySetInnerHTML={{ __html: HISTORY_CSS }} />
       <header style={S.header}>
         <Link href="/POSDashboard" style={S.back}>← Front Desk</Link>
-        <span style={{ color: "#475569" }}>|</span>
+        <span style={{ color: C.line }}>|</span>
         <span style={{ fontWeight: 700, fontSize: 16 }}>🏋️ Gym — History & Live Sessions</span>
       </header>
 
-      <main style={{ maxWidth: 1100, margin: "2rem auto", padding: "0 1.5rem", display: "flex", flexDirection: "column", gap: "2.5rem" }}>
+      <main style={{ maxWidth: 1100, margin: "2rem auto", padding: "0 1.5rem", display: "flex", flexDirection: "column", gap: "2.5rem", paddingBottom: "3rem" }}>
 
         {/* ── Live PavelFlow Sessions ─────────────────────────────────────── */}
         <section>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: "1rem" }}>
-            <h2 style={S.sectionH2}>〰️ Live Streams</h2>
+            <h2 style={S.sectionH2}>💳 Active PavelFlow Sessions</h2>
             {flowSessions.length > 0 && (
-              <span style={S.liveBadge}>● {flowSessions.length} streaming now</span>
+              <span style={S.liveBadge}>● {flowSessions.length} inside now</span>
             )}
           </div>
           {flowLoading ? (
             <p style={S.dim}>Loading…</p>
           ) : flowSessions.length === 0 ? (
-            <div style={S.emptyCard}>No active streams right now.</div>
+            <div style={S.emptyCard}>No members currently inside on PavelFlow.</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {flowSessions.map(s => (
                 <button key={s.id} onClick={() => setExitQrSession(s)} style={S.flowRow}>
-                  <span style={{ fontSize: 22 }}>〰️</span>
+                  <span style={{ fontSize: 22 }}>💳</span>
                   <div style={{ flex: 1, textAlign: "left" }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>
                       {s.name ?? shortWallet(s.walletAddress)}
                     </div>
-                    <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                    <div style={{ fontSize: 12, color: C.dim, marginTop: 2 }}>
                       In since {fmtTime(s.tapInAt)} · {elapsed(s.tapInAt)}
                     </div>
                   </div>
                   <div style={{ textAlign: "right" }}>
-                    <div style={{ fontWeight: 800, fontSize: 18, color: "#16a34a" }}>{money(s.runningCents, s.currency)}</div>
-                    <div style={{ fontSize: 11, color: "#94a3b8" }}>running total</div>
+                  <div style={{ fontWeight: 800, fontSize: 18, color: C.green }}>{money(s.runningCents, s.currency)}</div>
+                  <div style={{ fontSize: 11, color: C.dim }}>accrued so far</div>
                   </div>
                   <div style={S.exitQrHint}>
                     <span style={{ fontSize: 16 }}>📱</span>
-                    <span style={{ fontSize: 11, color: "#64748b" }}>Exit QR</span>
+                    <span style={{ fontSize: 11, color: C.dim }}>Exit QR</span>
                   </div>
                 </button>
               ))}
@@ -293,7 +327,7 @@ export default function GymHistory() {
 
         {/* ── All Gym Visits ──────────────────────────────────────────────── */}
         <section>
-          <h2 style={{ ...S.sectionH2, marginBottom: "1rem" }}>🗂️ All Gym Visits</h2>
+          <h2 style={{ ...S.sectionH2, marginBottom: "1rem" }}>�️ All Gym Visits</h2>
           {visitsLoading ? (
             <p style={S.dim}>Loading…</p>
           ) : visits.length === 0 ? (
@@ -317,7 +351,7 @@ export default function GymHistory() {
                             current={v.User?.name ?? null}
                             onSave={name => saveGymMemberName(v.User.nfcUid, name)}
                           />
-                          <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace" }}>{v.User?.nfcUid}</span>
+                          <span style={{ fontSize: 11, color: C.dim, fontFamily: "monospace" }}>{v.User?.nfcUid}</span>
                         </div>
                       </td>
                       <td style={S.td}>{fmtDate(v.tapInAt)}</td>
@@ -325,10 +359,10 @@ export default function GymHistory() {
                       <td style={{ ...S.td, whiteSpace: "nowrap" }}>
                         {v.tapOutAt
                           ? fmtTime(v.tapOutAt)
-                          : <span style={{ color: "#16a34a", fontWeight: 600 }}>● Inside now</span>}
+                          : <span style={{ color: C.green, fontWeight: 600 }}>● Inside now</span>}
                       </td>
-                      <td style={S.td}>{v.tapOutAt ? `${v.minutesAccumulated} min` : <span style={{ color: "#94a3b8" }}>—</span>}</td>
-                      <td style={{ ...S.td, color: "#94a3b8", fontSize: 12 }}>{v.terminalId}</td>
+                      <td style={S.td}>{v.tapOutAt ? `${v.minutesAccumulated} min` : <span style={{ color: C.dim }}>—</span>}</td>
+                      <td style={{ ...S.td, color: C.dim, fontSize: 12 }}>{v.terminalId}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -339,17 +373,17 @@ export default function GymHistory() {
 
         {/* ── PavelFlow History ───────────────────────────────────────────── */}
         <section>
-          <h2 style={{ ...S.sectionH2, marginBottom: "1rem" }}>〰️ Stream History</h2>
+          <h2 style={{ ...S.sectionH2, marginBottom: "1rem" }}>💳 PavelFlow History</h2>
           {flowHistLoading ? (
             <p style={S.dim}>Loading…</p>
           ) : flowHistory.length === 0 ? (
-            <div style={S.emptyCard}>No completed streams yet.</div>
+            <div style={S.emptyCard}>No completed PavelFlow sessions yet.</div>
           ) : (
             <div style={S.card}>
               <table style={S.table}>
                 <thead>
                   <tr style={S.thead}>
-                    {["Member / Wallet", "Date", "Started", "Ended", "Duration", "Total", "Status"].map(h => (
+                    {["Member / Wallet", "Date", "Entered", "Exited", "Duration", "Total", "Status"].map(h => (
                       <th key={h} style={S.th}>{h}</th>
                     ))}
                   </tr>
@@ -367,20 +401,20 @@ export default function GymHistory() {
                               current={s.name ?? null}
                               onSave={name => saveFlowSessionName(s.id, name)}
                             />
-                            <span style={{ fontSize: 11, color: "#94a3b8" }}>{shortWallet(s.walletAddress)}</span>
+                            <span style={{ fontSize: 11, color: C.dim }}>{shortWallet(s.walletAddress)}</span>
                           </div>
                         </td>
                         <td style={S.td}>{fmtDate(s.tapInAt)}</td>
                         <td style={{ ...S.td, whiteSpace: "nowrap" }}>{fmtTime(s.tapInAt)}</td>
                         <td style={{ ...S.td, whiteSpace: "nowrap" }}>{s.tapOutAt ? fmtTime(s.tapOutAt) : "—"}</td>
                         <td style={S.td}>{mins != null ? `${mins} min` : "—"}</td>
-                        <td style={{ ...S.td, fontWeight: 700, color: "#16a34a" }}>
+                        <td style={{ ...S.td, fontWeight: 700, color: C.green }}>
                           {s.totalCents != null ? money(s.totalCents, s.currency) : "—"}
                         </td>
                         <td style={S.td}>
                           <span style={{ padding: "2px 8px", borderRadius: 12, fontSize: 12, fontWeight: 600,
-                            background: s.status === "completed" ? "#dcfce7" : "#f1f5f9",
-                            color: s.status === "completed" ? "#16a34a" : "#64748b" }}>
+                            background: s.status === "completed" ? "rgba(34,197,94,0.15)" : C.panelSoft,
+                            color: s.status === "completed" ? C.green : C.dim }}>
                             {s.status}
                           </span>
                         </td>
@@ -396,7 +430,7 @@ export default function GymHistory() {
         {/* ── Settlement History (UID scoped) ─────────────────────────────── */}
         <section>
           <h2 style={{ ...S.sectionH2, marginBottom: "0.75rem" }}>📋 Settlement History</h2>
-          <p style={{ fontSize: 13, color: "#64748b", marginBottom: "1rem", marginTop: 0 }}>
+          <p style={{ fontSize: 13, color: C.dim, marginBottom: "1rem", marginTop: 0 }}>
             Midnight settlements by NFC UID — populated after the first full session day.
           </p>
           <form onSubmit={e => { e.preventDefault(); setSearchUid(uidInput.trim()); }}
@@ -430,10 +464,10 @@ export default function GymHistory() {
                       <td style={{ ...S.td, textTransform: "capitalize" }}>{s.serviceType}</td>
                       <td style={S.td}>{s.totalMinutes} min</td>
                       <td style={{ ...S.td, fontWeight: 700 }}>
-                        {s.status === "skipped" ? <span style={{ color: "#94a3b8" }}>—</span> : money(s.chargeAmountCents, s.currency)}
+                        {s.status === "skipped" ? <span style={{ color: C.dim }}>—</span> : money(s.chargeAmountCents, s.currency)}
                       </td>
                       <td style={S.td}>{statusBadge(s.status)}</td>
-                      <td style={{ ...S.td, fontSize: 12, color: "#6b7280" }}>
+                      <td style={{ ...S.td, fontSize: 12, color: C.dim }}>
                         {s.breakdown && s.status === "charged" && (
                           <>
                             Base {money(s.breakdown.base ?? 0)}
@@ -457,56 +491,57 @@ export default function GymHistory() {
           <div style={S.modalCard} onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
               <div>
-                <div style={{ fontWeight: 800, fontSize: 16 }}>Exit QR — PavelFlow</div>
-                <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Customer scans to close their stream and settle</div>
+                    <div style={{ fontWeight: 800, fontSize: 16, color: C.text }}>Exit QR — PavelFlow Check-Out</div>
+                <div style={{ fontSize: 12, color: C.dim, marginTop: 2 }}>Customer scans to exit the gym and settle their accrued balance</div>
               </div>
               <button onClick={() => setExitQrSession(null)} style={S.closeBtn}>✕</button>
             </div>
-            <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "0.75rem 1rem", marginBottom: 16 }}>
-              <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>Wallet</div>
-              <div style={{ fontSize: 13, fontWeight: 600, wordBreak: "break-all" }}>{shortWallet(exitQrSession.walletAddress)}</div>
+            <div style={{ background: C.greenSoft, border: `1px solid ${C.greenDeep}`, borderRadius: 8, padding: "0.75rem 1rem", marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: C.dim, marginBottom: 4 }}>Wallet</div>
+              <div style={{ fontSize: 13, fontWeight: 600, wordBreak: "break-all", color: C.text }}>{shortWallet(exitQrSession.walletAddress)}</div>
               <div style={{ display: "flex", gap: 24, marginTop: 10 }}>
-                <div><div style={{ fontSize: 11, color: "#64748b" }}>Time in gym</div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>{elapsed(exitQrSession.tapInAt)}</div></div>
-                <div><div style={{ fontSize: 11, color: "#64748b" }}>Running total</div>
-                  <div style={{ fontWeight: 700, fontSize: 15, color: "#16a34a" }}>{money(exitQrSession.runningCents, exitQrSession.currency)}</div></div>
-                <div><div style={{ fontSize: 11, color: "#64748b" }}>Rate</div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>${(exitQrSession.ratePerMinuteCents / 100).toFixed(2)}/min</div></div>
+                <div><div style={{ fontSize: 11, color: C.dim }}>Time inside</div>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: C.text }}>{elapsed(exitQrSession.tapInAt)}</div></div>
+                <div><div style={{ fontSize: 11, color: C.dim }}>Accrued so far</div>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: C.green }}>{money(exitQrSession.runningCents, exitQrSession.currency)}</div></div>
+                <div><div style={{ fontSize: 11, color: C.dim }}>Rate</div>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: C.text }}>${(exitQrSession.ratePerMinuteCents / 100).toFixed(2)}/min</div></div>
               </div>
             </div>
-            <div style={{ display: "flex", justifyContent: "center", padding: "1.25rem", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10 }}>
+            <div style={{ display: "flex", justifyContent: "center", padding: "1.25rem", background: "#fff", borderRadius: 10 }}>
               <QRCodeSVG value={exitQrSession.exitQrUrl} size={220} level="H" bgColor="#ffffff" fgColor="#0f172a" />
             </div>
-            <p style={{ fontSize: 12, color: "#94a3b8", textAlign: "center", margin: "12px 0 0" }}>
-              Customer scans → confirms exit → stream settles automatically
+            <p style={{ fontSize: 12, color: C.dim, textAlign: "center", margin: "12px 0 0" }}>
+              Customer scans → confirms exit → accrued balance is settled automatically
             </p>
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const S: Record<string, React.CSSProperties> = {
-  header:      { background: "#1e293b", color: "#fff", padding: "0 1.5rem", height: 56, display: "flex", alignItems: "center", gap: "1rem", position: "sticky", top: 0, zIndex: 100 },
-  back:        { color: "#94a3b8", textDecoration: "none", fontSize: 14 },
-  sectionH2:   { margin: 0, fontSize: 18, fontWeight: 800 },
-  liveBadge:   { display: "inline-block", padding: "2px 10px", borderRadius: 12, fontSize: 12, fontWeight: 600, background: "#dcfce7", color: "#16a34a" },
-  dim:         { color: "#94a3b8", fontSize: 14, margin: 0 },
-  emptyCard:   { padding: "1.5rem 2rem", textAlign: "center" as const, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, color: "#94a3b8", fontSize: 14 },
-  errorBox:    { padding: "0.75rem 1rem", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, color: "#dc2626", fontSize: 14 },
-  card:        { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" },
+  header:      { background: "rgba(11,17,32,0.9)", color: C.text, padding: "0 1.5rem", height: 60, display: "flex", alignItems: "center", gap: "1rem", position: "sticky", top: 0, zIndex: 100, backdropFilter: "blur(8px)", borderBottom: `1px solid ${C.line}` },
+  back:        { color: C.dim, textDecoration: "none", fontSize: 14 },
+  sectionH2:   { margin: 0, fontSize: 18, fontWeight: 800, color: C.text },
+  liveBadge:   { display: "inline-block", padding: "2px 10px", borderRadius: 12, fontSize: 12, fontWeight: 600, background: "rgba(34,197,94,0.15)", color: C.green },
+  dim:         { color: C.dim, fontSize: 14, margin: 0 },
+  emptyCard:   { padding: "1.5rem 2rem", textAlign: "center" as const, background: C.panelSoft, border: `1px solid ${C.line}`, borderRadius: 12, color: C.dim, fontSize: 14 },
+  errorBox:    { padding: "0.75rem 1rem", background: "rgba(220,38,38,0.1)", border: "1px solid rgba(220,38,38,0.4)", borderRadius: 8, color: "#fca5a5", fontSize: 14 },
+  card:        { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 4px 16px rgba(0,0,0,0.3)" },
   table:       { width: "100%", borderCollapse: "collapse" as const, fontSize: 14 },
-  thead:       { background: "#f8fafc", borderBottom: "1px solid #e2e8f0" },
-  th:          { textAlign: "left" as const, padding: "0.65rem 1rem", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" as const, fontSize: 13 },
-  td:          { padding: "0.65rem 1rem", color: "#1e293b", verticalAlign: "middle" as const },
-  flowRow:     { width: "100%", display: "flex", alignItems: "center", gap: 16, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.875rem 1rem", cursor: "pointer", textAlign: "left" as const, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" },
-  exitQrHint:  { display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 2, padding: "0.4rem 0.75rem", borderRadius: 8, background: "#f0fdf4", border: "1px solid #bbf7d0" },
-  searchInput: { flex: 1, padding: "0.5rem 0.75rem", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 14, outline: "none" },
-  searchBtn:   { padding: "0.5rem 1.25rem", background: "#1e293b", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: "pointer" },
-  modalOverlay:{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "1rem" },
-  modalCard:   { background: "#fff", borderRadius: 16, padding: "1.5rem", width: "100%", maxWidth: 420, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" },
-  closeBtn:    { background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#94a3b8", lineHeight: 1, padding: 4 },
+  thead:       { background: C.panelSoft, borderBottom: `1px solid ${C.line}` },
+  th:          { textAlign: "left" as const, padding: "0.65rem 1rem", fontWeight: 600, color: C.dim, whiteSpace: "nowrap" as const, fontSize: 13, letterSpacing: "0.04em" },
+  td:          { padding: "0.65rem 1rem", color: C.text, verticalAlign: "middle" as const },
+  flowRow:     { width: "100%", display: "flex", alignItems: "center", gap: 16, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: "0.875rem 1rem", cursor: "pointer", textAlign: "left" as const, boxShadow: "0 2px 8px rgba(0,0,0,0.2)" },
+  exitQrHint:  { display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 2, padding: "0.4rem 0.75rem", borderRadius: 8, background: C.greenSoft, border: `1px solid ${C.greenDeep}` },
+  searchInput: { flex: 1, padding: "0.5rem 0.75rem", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 14, outline: "none", background: C.panelSoft, color: C.text },
+  searchBtn:   { padding: "0.5rem 1.25rem", background: C.greenDeep, color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: "pointer" },
+  modalOverlay:{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "1rem" },
+  modalCard:   { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 16, padding: "1.5rem", width: "100%", maxWidth: 440, boxShadow: "0 20px 60px rgba(0,0,0,0.6)" },
+  closeBtn:    { background: "none", border: "none", fontSize: 18, cursor: "pointer", color: C.dim, lineHeight: 1, padding: 4 },
 };
+

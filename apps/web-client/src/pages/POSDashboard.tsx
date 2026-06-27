@@ -203,10 +203,10 @@ export default function POSDashboard() {
             {selectedPass.streaming ? (
               <>
                 <span>
-                  <span style={{ display: "block", color: C.dim, fontSize: 13 }}>Web Monetization</span>
-                  <span style={{ fontSize: 11, color: C.dim }}>No fixed amount — streams until tap-out</span>
+                  <span style={{ display: "block", color: C.dim, fontSize: 13 }}>PavelFlow · $0.50/min</span>
+                  <span style={{ fontSize: 11, color: C.dim }}>No fixed amount — accumulates until tap-out</span>
                 </span>
-                <span style={{ fontSize: 14, fontWeight: 700, color: C.green }}>Live 〰️</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.green }}>Live 💳</span>
               </>
             ) : (
               <>
@@ -280,7 +280,7 @@ export default function POSDashboard() {
           {status === "pending" && qrUrl && (
             <div className="center fadeUp">
               <p style={{ margin: "0 0 14px", color: C.dim, fontSize: 14 }}>
-                {label}{selectedPass.streaming ? " · " : " · "}<strong style={{ color: C.text }}>{selectedPass.streaming ? "Web Monetization — live stream" : `${money(amount)} now`}</strong>
+                {label}{selectedPass.streaming ? " · " : " · "}<strong style={{ color: C.text }}>{selectedPass.streaming ? "PavelFlow · $0.50/min" : `${money(amount)} now`}</strong>
               </p>
               <div className="qrGlow" style={S.qrWrap}>
                 <QRCodeSVG value={qrUrl} size={210} level="H" bgColor="#ffffff" fgColor="#0b1120" />
@@ -348,30 +348,30 @@ export default function POSDashboard() {
           <section style={S.panel} className="fadeUp">
             {selectedPass.streaming ? (
               <>
-                <h2 style={S.h2}>PavelFlow — Web Monetization</h2>
+                <h2 style={S.h2}>PavelFlow</h2>
                 <p style={{ margin: "-6px 0 14px", fontSize: 12.5, color: C.dim }}>
-                  Micropayments stream continuously from the customer&apos;s wallet while they train. No upfront charge — the session closes when they tap out.
+                  Charges accrue in real time from the customer&apos;s wallet while they train. No upfront charge — the balance settles when they scan the exit QR to leave.
                 </p>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0.75rem", background: C.greenSoft, borderRadius: 8, marginBottom: 12 }}>
-                  <span style={{ fontSize: 22 }}>〰️</span>
+                  <span style={{ fontSize: 22 }}>💳</span>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: C.green }}>Streaming now</div>
-                    <div style={{ fontSize: 12, color: C.dim }}>Payments accumulate until tap-out</div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: C.green }}>Session active — accumulating</div>
+                    <div style={{ fontSize: 12, color: C.dim }}>$0.50/min · max $60.00/day · settles on exit</div>
                   </div>
                 </div>
                 <div style={{ fontSize: 12.5, color: C.dim, lineHeight: 1.6 }}>
                   <div>● No set amount required at the till</div>
-                  <div>● Wallet streams micropayments in real time</div>
-                  <div>● Total settled automatically on tap-out</div>
+                  <div>● Charge accumulates per minute in real time</div>
+                  <div>● Full balance settled automatically on exit</div>
                 </div>
               </>
             ) : (
               <>
-                <h2 style={S.h2}>What they&apos;ll actually pay</h2>
+                <h2 style={S.h2}>Their charge today</h2>
                 <p style={{ margin: "-6px 0 14px", fontSize: 12.5, color: C.dim }}>
                   {mode === "payg"
-                    ? "Paid upfront, then reduced by time spent."
-                    : "A daily charge that shrinks the more it's used."}
+                    ? "The longer they stay, the more they save — drag to preview."
+                    : "Members pay less the more sessions they fit in — drag to preview."}
                 </p>
 
                 <div style={S.estTop}>
@@ -382,23 +382,24 @@ export default function POSDashboard() {
                     </div>
                   </div>
                   <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 12, color: C.dim }}>was</div>
+                    <div style={{ fontSize: 12, color: C.dim }}>full price</div>
                     <div style={{ fontSize: 16, fontWeight: 700, color: C.dim, textDecoration: "line-through" }}>
                       {money(est.baseCents)}
                     </div>
-                    {est.savedCents > 0 && (
-                      <div style={{ fontSize: 12, color: C.amber, fontWeight: 700 }}>
-                        −{money(est.savedCents)}
-                      </div>
-                    )}
                   </div>
                 </div>
+                {est.savedCents > 0 && (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, padding: "8px 12px", background: "rgba(251,191,36,0.07)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 8 }}>
+                    <span style={{ fontSize: 12.5, color: C.amber, fontWeight: 700 }}>They save today</span>
+                    <span style={{ fontSize: 15, fontWeight: 900, color: C.amber }}>{money(est.savedCents)}</span>
+                  </div>
+                )}
 
                 <DiscountBar fraction={est.discountFraction} max={est.maxFraction} />
 
                 {/* Minutes slider */}
                 <label style={S.sliderLabel}>
-                  <span>Time in gym</span>
+                  <span>How long will they stay?</span>
                   <span style={{ color: C.text, fontWeight: 700 }}>{minutes} min</span>
                 </label>
                 <input
@@ -422,7 +423,7 @@ export default function POSDashboard() {
                     background: peak ? "rgba(251,191,36,0.08)" : "transparent",
                   }}
                 >
-                  {peak ? "● Peak hours — smaller discount" : "○ Off-peak — full discount"}
+                  {peak ? "● Peak hours active — discount reduced" : "○ Off-peak — maximum discount applies"}
                 </button>
               </>
             )}
@@ -467,18 +468,18 @@ export default function POSDashboard() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
               <div>
                 <div style={{ fontWeight: 800, fontSize: 16, color: C.text }}>Entry QR — PavelFlow</div>
-                <div style={{ fontSize: 12, color: C.dim, marginTop: 2 }}>Customer scans to confirm entry and start their stream</div>
+                <div style={{ fontSize: 12, color: C.dim, marginTop: 2 }}>Customer scans to confirm entry and start their session</div>
               </div>
               <button onClick={handleFlowReset} style={{ background: "none", border: "none", color: C.dim, fontSize: 18, cursor: "pointer", lineHeight: 1, padding: 4 }}>✕</button>
             </div>
             <div style={{ background: C.greenSoft, border: `1px solid ${C.green}`, borderRadius: 8, padding: "0.65rem 1rem", marginBottom: 14, fontSize: 13, color: C.green }}>
-              〰️ PavelFlow — $0.50/min · max $60.00/day
+              💳 PavelFlow — $0.50/min · max $60.00/day
             </div>
             <div style={{ display: "flex", justifyContent: "center", padding: "1.25rem", background: "#fff", borderRadius: 10 }}>
               <QRCodeSVG value={flowEntryQr} size={210} level="H" bgColor="#ffffff" fgColor="#0b1120" />
             </div>
             <p style={{ fontSize: 12, color: C.dim, textAlign: "center", marginTop: 12 }}>
-              Customer scans → confirms entry → stream begins
+              Customer scans → confirms entry → charges start accumulating
             </p>
             <button onClick={handleFlowReset} style={{ width: "100%", marginTop: 12, padding: "0.6rem", background: C.panelSoft, border: `1px solid ${C.line}`, borderRadius: 8, color: C.dim, fontSize: 13, cursor: "pointer" }}>
               ↺ New session

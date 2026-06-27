@@ -94,6 +94,9 @@ export default function MockVideoPlayer({ nfcUid, onSessionChange, onLiveStats }
   const sessionIdRef = useRef<string | null>(null);
   // Heartbeat timer that reports watched time to the backend while playing.
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // True when the user clicked play on a freshly-selected card; tells the
+  // video to start as soon as its metadata is ready.
+  const pendingPlayRef = useRef(false);
 
   // Stop the heartbeat if the player unmounts mid-playback.
   useEffect(
@@ -165,8 +168,22 @@ export default function MockVideoPlayer({ nfcUid, onSessionChange, onLiveStats }
     [nfcUid, onSessionChange]
   );
 
-  function handleSelect(content: MockContent) {
-    if (selected?.id === content.id) return;
+  /**
+   * Select a piece of content.
+   * @param shouldPlay  true → start playback as soon as the video is ready.
+   *                    false → just show the content info; wait for the user
+   *                    to press the play button.
+   */
+  function handleSelect(content: MockContent, shouldPlay: boolean) {
+    if (selected?.id === content.id) {
+      // Already selected: if the user pressed the play button and nothing is
+      // playing yet, trigger playback directly.
+      if (shouldPlay && !sessionId) {
+        videoRef.current?.play().catch(() => {});
+      }
+      return;
+    }
+    pendingPlayRef.current = shouldPlay;
     setSelected(content);
     setSessionId(null);
     sessionIdRef.current = null;
@@ -174,15 +191,14 @@ export default function MockVideoPlayer({ nfcUid, onSessionChange, onLiveStats }
     setDurationSeconds(0);
     maxWatchedRef.current = 0;
     wm.reset();
-    setMessage("Loading…");
-    // The <video> is remounted (key={selected.id}) with autoPlay, so playback
-    // starts on its own once the new source is ready — see handleCanPlay.
+    setMessage("");
   }
 
-  // Fallback play trigger: if the browser blocked autoPlay, retry once the
-  // media is ready. This still runs inside the user's click activation window.
+  // Only trigger play if the user explicitly pressed the play button on a new
+  // card.  autoPlay has been removed, so this never fires unexpectedly.
   function handleCanPlay() {
-    if (videoRef.current && videoRef.current.paused) {
+    if (pendingPlayRef.current && videoRef.current?.paused) {
+      pendingPlayRef.current = false;
       videoRef.current.play().catch(() => {});
     }
   }
@@ -228,16 +244,22 @@ export default function MockVideoPlayer({ nfcUid, onSessionChange, onLiveStats }
     if (!v) return;
     const dur = Number.isFinite(v.duration) ? v.duration : 0;
     setDurationSeconds(dur);
-    if (selected && !sessionId) {
-      startSession(selected, dur);
+    // Trigger pending play set by the play button (not the card click).
+    if (pendingPlayRef.current) {
+      pendingPlayRef.current = false;
+      v.play().catch(() => {});
     }
   }
 
-  function handlePlay() {
+  async function handlePlay() {
     setIsPlaying(true);
     wm.start();
     if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     progressTimerRef.current = setInterval(reportProgress, 15000);
+    // Create the backend session on first play (not on content selection).
+    if (!sessionIdRef.current && selected) {
+      await startSession(selected, videoRef.current?.duration || durationSeconds || 0);
+    }
   }
 
   function handlePause() {
@@ -316,7 +338,6 @@ export default function MockVideoPlayer({ nfcUid, onSessionChange, onLiveStats }
               key={selected.id}
               ref={videoRef}
               src={selected.src}
-              autoPlay
               controls
               playsInline
               onCanPlay={handleCanPlay}
@@ -429,20 +450,38 @@ export default function MockVideoPlayer({ nfcUid, onSessionChange, onLiveStats }
                   {items.map((content) => {
                     const isActive = selected?.id === content.id;
                     const disabled = isPlaying && !isActive;
-                    const activate = () =>
-                      isActive && sessionId ? handleStop() : handleSelect(content);
+                    // Card click: select the content to reveal its rate, but
+                    // do NOT start playback.
+                    const onCardClick = () => {
+                      if (disabled) return;
+                      if (isActive && sessionId) {
+                        handleStop();
+                      } else {
+                        handleSelect(content, false);
+                      }
+                    };
+                    // Play button: select + immediately start playback (or stop).
+                    const onPlayClick = (e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      if (disabled) return;
+                      if (isActive && sessionId) {
+                        handleStop();
+                      } else {
+                        handleSelect(content, true);
+                      }
+                    };
                     return (
                       <div
                         key={content.id}
                         role="button"
                         tabIndex={disabled ? -1 : 0}
                         aria-disabled={disabled}
-                        onClick={() => !disabled && activate()}
+                        onClick={onCardClick}
                         onKeyDown={(e) => {
                           if (disabled) return;
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
-                            activate();
+                            onCardClick();
                           }
                         }}
                         style={{
@@ -460,14 +499,18 @@ export default function MockVideoPlayer({ nfcUid, onSessionChange, onLiveStats }
                             {content.title}
                           </div>
                           <div style={{ fontSize: 11, color: C.dim, marginTop: 3 }}>
-                            {content.duration} · <span style={{ color: C.accent, fontWeight: 700 }}>Web Monetized</span>
+                            {content.duration} ·{" "}
+                            {isActive && !sessionId ? (
+                              <span style={{ color: C.green, fontWeight: 700 }}>
+                                {money(DEMO_RATE_CENTS_PER_MIN)}/min
+                              </span>
+                            ) : (
+                              <span style={{ color: C.accent, fontWeight: 700 }}>Web Monetized</span>
+                            )}
                           </div>
                         </div>
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (!disabled) activate();
-                          }}
+                          onClick={onPlayClick}
                           disabled={disabled}
                           style={{
                             ...S.playBtn,

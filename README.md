@@ -177,7 +177,7 @@ sequenceDiagram
   Viewer->>Viewer: Mount <link rel="monetization" href="{merchantWallet}">
   WM->>Merchant: Stream sub-cent ILP micropayments continuously
   WM->>Viewer: fire `monetization` event (amountSent per packet)
-  Viewer->>Backend: POST /api/stream/update { streamedCents } (per cent)
+  Viewer->>Backend: POST /api/stream/payment { sessionId, amountCents } (per cent)
   Note over WM,Merchant: Money already moved — backend only records the amount
   Viewer->>Backend: Press Stop → POST /api/stream/end
   Viewer->>Viewer: Remove <link> — payments stop immediately
@@ -308,7 +308,7 @@ PavelFlix uses the [Web Monetization specification](https://webmonetization.org/
 3. The browser fires a `monetization` event on the link element for each payment sent, carrying `amountSent.value` and `amountSent.currency`
 4. The hook accumulates sub-cent amounts precisely and calls `onPayment(cents)` every time a whole new cent is crossed
 5. The player reports each increment to the backend → `StreamSession.streamedCents` grows in real time
-6. At midnight, the settlement cron charges the total as a single outgoing Open Payments transaction
+6. At midnight, the settlement cron writes a `DailySettlement` record with `chargeAmountCents=0` and `status=skipped` — **no outgoing payment is created** because the WM agent already paid the merchant in real time
 
 **Demo fallback:** if no WM-enabled browser is present (`link.relList.supports("monetization")` returns false), a configurable ticker (`NEXT_PUBLIC_STREAM_RATE_CENTS_PER_MIN`, default 12¢/min) simulates the stream so the live UI still works during demos. Real payments take over automatically and disable the fallback.
 
@@ -328,15 +328,23 @@ apps/
   core-backend/         Express API, billing engine, settlement cron, Open Payments integration
     src/
       controllers/
-        gymController.js    All gym + PavelFlow endpoints + payment orchestration
+        gymController.js        All gym + PavelFlow + POS endpoints + payment orchestration
+        streamingController.js  All PavelFlix endpoints
+        grantController.js      GNAP grant initiation + callback
+        paymentController.js    Legacy NFC trigger-payment route
+        transactionController.js  Transaction history
       models/
-        index.js            Sequelize models: User, GymSession, FlowSession, DailySettlement, ...
+        index.js            Sequelize models: User, Mandate, Transaction, Subscription,
+                            GymSession, FlowSession, StreamSession, DailySettlement
       services/
-        billing.js          Pricing formulas
-        gym-session.js      Tap in/out logic
-        settlement.js       Midnight cron job
-        pos-payment.js      Incoming payment creation + interactive grant flow
-        open-payments.js    Open Payments SDK client
+        billing.js              Pricing formulas (dynamic, static, streaming, movie)
+        gym-session.js          Tap in/out logic
+        streaming-session.js    Stream start/end/update logic
+        settlement.js           Midnight cron job
+        pos-payment.js          Incoming payment creation + interactive grant flow
+        pos-open-payments.js    Wallet address normalisation + raw Open Payments helpers
+        open-payments.js        Open Payments SDK client singleton
+        gnap-auth.js            GNAP grant lifecycle (initiate, continue, rotate)
   edge-terminal/        NFC event sender (physical demo hardware)
   web-client/           Next.js app
     src/
@@ -404,6 +412,11 @@ PAYMENT_CURRENCY=USD
 BACKEND_PORT=4001
 FRONTEND_URL=http://localhost:3000
 
+# PavelFlix — Web Monetization receiver (the service wallet that gets paid while video plays)
+NEXT_PUBLIC_WALLET_ADDRESS=https://ilp.interledger-test.dev/yourstreamingwallet
+# Demo fallback rate when no WM-enabled browser is present (cents per minute, default 12)
+NEXT_PUBLIC_STREAM_RATE_CENTS_PER_MIN=12
+
 NODE_ENV=development
 ```
 
@@ -445,7 +458,7 @@ curl http://localhost:4001/api/gym/pricing
 ### Demo B: POS instant pass
 
 1. Select a pass (e.g. **Day Pass — R60.00**) on POSDashboard
-2. Click **"Generate Open Payments Quote"** — QR appears
+2. Click **"Charge customer"** — QR appears
 3. Scan QR with Interledger wallet → confirm payment
 4. Dashboard shows ✅ STATUS: COMPLETED
 
@@ -480,6 +493,7 @@ Click the **"Add name ✎"** label on any row to assign a customer name. Names p
 
 | Method | Path | Description |
 |--------|------|-------------|
+| POST | `/api/gym/flow/check-balance` | Resolve customer wallet address; returns rate info and daily cap |
 | POST | `/api/gym/flow/start` | Create a new session; returns entry QR URL |
 | GET | `/api/gym/flow/entry-page?token=` | HTML page for customer to confirm wallet |
 | POST | `/api/gym/flow/confirm-entry` | Save wallet address; activates session |
@@ -511,7 +525,7 @@ Click the **"Add name ✎"** label on any row to assign a customer name. Names p
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/gym/pos/incoming-payment` | Create incoming payment; returns QR-ready pay-page URL |
-| GET | `/api/gym/pos/payment-status/:id` | Poll payment status (pending / completed) |
+| GET | `/api/gym/pos/payment-status/:incomingPaymentId` | Poll payment status (pending / completed) |
 | GET | `/api/gym/pos/pay-page` | Customer-facing HTML: enter wallet + confirm |
 | POST | `/api/gym/pos/pay` | Create quote + interactive grant; returns wallet consent URL |
 | GET | `/api/gym/pos/pay/callback` | Wallet redirect callback — finalizes outgoing payment |
@@ -521,9 +535,12 @@ Click the **"Add name ✎"** label on any row to assign a customer name. Names p
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/stream/start` | Start stream session |
+| POST | `/api/stream/payment` | Record a Web Monetization micropayment tick |
+| POST | `/api/stream/progress` | Update seconds watched / duration |
 | POST | `/api/stream/end` | End stream session |
-| GET | `/api/stream/session/:uid` | Current session + daily usage |
+| GET | `/api/stream/session/:uid` | Current session + daily usage + streamed total |
 | POST | `/api/stream/subscribe` | Subscribe for streaming |
+| GET | `/api/stream/subscriptions/:uid` | Active streaming subscriptions for a user |
 | GET | `/api/stream/pricing` | Streaming pricing constants |
 
 ### Grants + Payments
@@ -550,7 +567,7 @@ Click the **"Add name ✎"** label on any row to assign a customer name. Names p
 
 ### Wallet approval succeeds but subscription stays inactive
 
-- Verify `BACKEND_PUBLIC_URL` is the correct callback origin.
+- Verify `PUBLIC_BASE_URL` is the correct callback origin.
 - Verify `KEY_ID` matches the developer key uploaded to the testnet wallet.
 
 ### Settlement shows `skipped` for all users
@@ -585,11 +602,14 @@ docker-compose up -d
 
 | File | Purpose |
 |------|---------|
-| `gymController.js` | All gym + PavelFlow endpoints and payment orchestration |
-| `models/index.js` | Sequelize models — `User` (with `name`), `GymSession`, `FlowSession` (with `name`), `DailySettlement` |
+| `gymController.js` | All gym + PavelFlow + POS endpoints and payment orchestration |
+| `streamingController.js` | All PavelFlix endpoints (start, payment tick, progress, end, pricing) |
+| `models/index.js` | Sequelize models — `User`, `Mandate`, `Transaction`, `Subscription`, `GymSession`, `FlowSession`, `StreamSession`, `DailySettlement` |
 | `services/pos-payment.js` | `createPOSIncomingPayment`, `createPaymentConsent`, `finalizePaymentConsent` |
+| `services/gnap-auth.js` | GNAP grant lifecycle — initiate, continue, token rotation |
+| `services/streaming-session.js` | Stream start / end / payment tick / progress logic |
 | `services/settlement.js` | Midnight cron — settles GymSessions and StreamSessions only (PavelFlow settles at exit) |
-| `services/billing.js` | All charge formulas |
+| `services/billing.js` | All charge formulas (dynamic, static, streaming, movie) |
 | `pages/POSDashboard.tsx` | Front desk: POS pass QR + PavelFlow session start |
 | `pages/GymHistory.tsx` | Live sessions, all-time history, exit QR modal, name editor |
 

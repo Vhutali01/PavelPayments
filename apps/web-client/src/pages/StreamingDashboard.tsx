@@ -7,6 +7,7 @@ import MockVideoPlayer, { LiveStats } from "../components/MockVideoPlayer";
 import { STREAM_C as C, STREAM_CSS, streamMoney } from "../lib/streamTheme";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4001";
+const STREAM_RATE_CPM = Number(process.env.NEXT_PUBLIC_STREAM_RATE_CENTS_PER_MIN ?? 12);
 
 // No NFC tap is needed for streaming — Web Monetization pays the service wallet
 // directly. This id only labels the session for the "today" stats and can be
@@ -81,8 +82,8 @@ export default function StreamingDashboard() {
               />
               <Stat
                 label="PAID IN REAL TIME"
-                value="Live"
-                hint="Web Monetization streams as you watch"
+                value={`${streamMoney(STREAM_RATE_CPM)}/min`}
+                hint="Web Monetization rate per minute"
                 tone="green"
               />
             </>
